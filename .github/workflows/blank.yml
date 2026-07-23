@@ -1,0 +1,411 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  StyleSheet, Text, View, TextInput, TouchableOpacity, 
+  Alert, KeyboardAvoidingView, Platform, ScrollView, Modal 
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// --- CONFIGURAÇÃO DE CATEGORIAS ---
+const CATEGORIAS_CONFIG = {
+  'Fixa': ['Luz', 'Cartão de Crédito', 'Gasolina Trabalho', 'Outros'],
+  'Variável': [
+    'Moto - Gasolina', 'Moto - Peças', 
+    'Carro - Gasolina', 'Carro - Peças', 
+    'Filho', 'Filha', 'Esposa', 'Lanche', 
+    'Doação', 'Empréstimo', 'Gasolina', 'Diversos', 'Outros'
+  ]
+};
+
+export default function App() {
+  const [descricao, setDescricao] = useState(CATEGORIAS_CONFIG['Fixa'][0]);
+  const [valor, setValor] = useState('');
+  const [tipoCategoria, setTipoCategoria] = useState('Fixa');
+  const [subCategoria, setSubCategoria] = useState(CATEGORIAS_CONFIG['Fixa'][0]);
+  const [gastos, setGastos] = useState([]);
+  const [historico, setHistorico] = useState([]);
+  
+  // Estado para o Menu Lateral / Modal
+  const [menuVisivel, setMenuVisivel] = useState(false);
+  const [abaMenu, setAbaMenu] = useState('categorias');
+  const [buscaCategoria, setBuscaCategoria] = useState(''); // Estado para o campo de busca
+
+  // Carregar dados ao iniciar
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // Salvar dados sempre que a lista de gastos ou histórico mudar
+  useEffect(() => {
+    saveData();
+  }, [gastos, historico]);
+
+  const saveData = async () => {
+    try {
+      await AsyncStorage.setItem('@meus_gastos', JSON.stringify(gastos));
+      await AsyncStorage.setItem('@meu_historico', JSON.stringify(historico));
+    } catch (e) {
+      console.error("Erro ao salvar", e);
+    }
+  };
+
+  const loadData = async () => {
+    try {
+      const savedGastos = await AsyncStorage.getItem('@meus_gastos');
+      const savedHistorico = await AsyncStorage.getItem('@meu_historico');
+      if (savedGastos) setGastos(JSON.parse(savedGastos));
+      if (savedHistorico) setHistorico(JSON.parse(savedHistorico));
+    } catch (e) {
+      console.error("Erro ao carregar", e);
+    }
+  };
+
+  const selecionarSubCategoria = (cat) => {
+    setSubCategoria(cat);
+    if (cat === 'Outros' || cat === 'Diversos') {
+      setDescricao('');
+    } else {
+      setDescricao(cat);
+    }
+  };
+
+  const alternarTipoCategoria = (tipo) => {
+    setTipoCategoria(tipo);
+    const primeiraSub = CATEGORIAS_CONFIG[tipo][0];
+    selecionarSubCategoria(primeiraSub);
+  };
+
+  const adicionarGasto = () => {
+    if (!descricao || !valor) {
+      Alert.alert("Erro", "Preencha a descrição e o valor!");
+      return;
+    }
+
+    const valorNumerico = parseFloat(valor.replace(',', '.'));
+    if (isNaN(valorNumerico) || valorNumerico <= 0) {
+      Alert.alert("Erro", "Insira um valor numérico válido!");
+      return;
+    }
+
+    const totalAtual = gastos.reduce((acc, item) => acc + item.valor, 0);
+    const novoTotal = totalAtual + valorNumerico;
+
+    // AVISO DE MARCA DE 1000, 2000, 3000...
+    const milharAnterior = Math.floor(totalAtual / 1000);
+    const novoMilhar = Math.floor(novoTotal / 1000);
+
+    if (novoMilhar > milharAnterior && novoMilhar > 0) {
+      Alert.alert(
+        "⚠️ Atenção aos Gastos!",
+        `Você atingiu a marca de R$ ${(novoMilhar * 1000).toFixed(2)} em gastos neste mês!`
+      );
+    }
+
+    const novoGasto = {
+      id: Date.now().toString(),
+      descricao,
+      valor: valorNumerico,
+      tipo: tipoCategoria,
+      categoria: subCategoria,
+      data: new Date().toLocaleDateString('pt-BR'),
+    };
+
+    setGastos([novoGasto, ...gastos]);
+    
+    if (subCategoria === 'Outros' || subCategoria === 'Diversos') {
+      setDescricao('');
+    } else {
+      setDescricao(subCategoria);
+    }
+    setValor('');
+  };
+
+  const removerGasto = (id) => {
+    Alert.alert(
+      "Excluir Gasto",
+      "Deseja realmente remover este registro?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { 
+          text: "Excluir", 
+          style: "destructive",
+          onPress: () => {
+            const novaLista = gastos.filter(item => item.id !== id);
+            setGastos(novaLista);
+          } 
+        }
+      ]
+    );
+  };
+
+  const fecharMes = () => {
+    if (gastos.length === 0) {
+      Alert.alert("Aviso", "Não há gastos salvos para fechar o mês.");
+      return;
+    }
+
+    const totalMes = gastos.reduce((acc, item) => acc + item.valor, 0);
+    const mesAtual = new Date().toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+
+    Alert.alert(
+      "Fechar Mês",
+      `Total do mês (${mesAtual}): R$ ${totalMes.toFixed(2)}\n\nIsso moverá os gastos para o histórico e limpará a lista atual.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        { 
+          text: "Confirmar", 
+          onPress: () => {
+            const novoRegistroHistorico = {
+              mes: mesAtual,
+              total: totalMes,
+              itens: [...gastos]
+            };
+            setHistorico([novoRegistroHistorico, ...historico.slice(0, 5)]);
+            setGastos([]);
+          } 
+        }
+      ]
+    );
+  };
+
+  const totalGastoAtual = gastos.reduce((acc, item) => acc + item.valor, 0);
+
+  // Agrupar gastos por categoria no mês atual
+  const gastosPorCategoria = gastos.reduce((acc, item) => {
+    acc[item.categoria] = (acc[item.categoria] || 0) + item.valor;
+    return acc;
+  }, {});
+
+  // Filtra as categorias com base no que o usuário digitar na busca
+  const categoriasFiltradas = Object.entries(gastosPorCategoria).filter(([cat]) =>
+    cat.toLowerCase().includes(buscaCategoria.toLowerCase())
+  );
+
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
+      
+      {/* HEADER COM TOTAL E BOTÃO MENU */}
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.btnMenu} onPress={() => setMenuVisivel(true)}>
+          <Text style={styles.icMenu}>☰</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitulo}>Dashboard</Text>
+        <Text style={styles.headerTotal}>R$ {totalGastoAtual.toFixed(2)}</Text>
+        <Text style={styles.headerSub}>Gastos do Mês Atual</Text>
+      </View>
+
+      <ScrollView style={{ flex: 1 }}>
+        {/* FORMULÁRIO */}
+        <View style={styles.card}>
+          <TextInput 
+            style={styles.input} 
+            placeholder="Descrição do gasto" 
+            value={descricao}
+            onChangeText={setDescricao}
+          />
+          <TextInput 
+            style={styles.input} 
+            placeholder="Valor R$ (ex: 45.50)" 
+            keyboardType="numeric"
+            value={valor}
+            onChangeText={setValor}
+          />
+
+          {/* Seleção Tipo (Fixa/Variável) */}
+          <View style={styles.row}>
+            <TouchableOpacity 
+              style={[styles.btnTipo, tipoCategoria === 'Fixa' && styles.btnTipoAtivo]}
+              onPress={() => alternarTipoCategoria('Fixa')}
+            >
+              <Text style={tipoCategoria === 'Fixa' ? styles.textWhite : styles.textBlack}>Fixa</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.btnTipo, tipoCategoria === 'Variável' && styles.btnTipoAtivo]}
+              onPress={() => alternarTipoCategoria('Variável')}
+            >
+              <Text style={tipoCategoria === 'Variável' ? styles.textWhite : styles.textBlack}>Variável</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Seleção Sub-Categoria */}
+          <Text style={styles.labelSub}>Sub-categoria:</Text>
+          <View style={styles.gridCategorias}>
+            {CATEGORIAS_CONFIG[tipoCategoria].map((cat) => (
+              <TouchableOpacity 
+                key={cat} 
+                style={[styles.btnCat, subCategoria === cat && styles.btnCatAtivo]}
+                onPress={() => selecionarSubCategoria(cat)}
+              >
+                <Text style={[styles.textCat, subCategoria === cat && styles.textWhite]}>{cat}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TouchableOpacity style={styles.btnAdicionar} onPress={adicionarGasto}>
+            <Text style={styles.textWhite}>Adicionar Gasto</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* LISTA ATUAL */}
+        <Text style={styles.sectionTitle}>Gastos do Mês</Text>
+        {gastos.length === 0 ? (
+          <Text style={styles.emptyText}>Nenhum gasto registrado neste mês.</Text>
+        ) : (
+          gastos.map(item => (
+            <TouchableOpacity key={item.id} onPress={() => removerGasto(item.id)}>
+              <View style={styles.itemGasto}>
+                <View>
+                  <Text style={styles.itemDesc}>{item.descricao}</Text>
+                  <Text style={styles.itemInfo}>{item.categoria} ({item.tipo}) • {item.data}</Text>
+                </View>
+                <Text style={styles.itemValor}>R$ {item.valor.toFixed(2)}</Text>
+              </View>
+            </TouchableOpacity>
+          ))
+        )}
+        
+        <View style={{ height: 100 }} />
+      </ScrollView>
+
+      {/* BOTÃO FIXO DE FECHAR MÊS */}
+      <View style={styles.footer}>
+        <TouchableOpacity style={styles.btnFechar} onPress={fecharMes}>
+          <Text style={styles.textWhite}>Finalizar Mês e Gerar Histórico</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* MODAL / TELA DE MENU */}
+      <Modal visible={menuVisivel} animationType="slide" onRequestClose={() => setMenuVisivel(false)}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitulo}>Relatórios e Histórico</Text>
+            <TouchableOpacity onPress={() => setMenuVisivel(false)}>
+              <Text style={styles.btnFecharModal}>✕ Fechar</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* ABAS DO MENU */}
+          <View style={styles.rowAba}>
+            <TouchableOpacity 
+              style={[styles.btnAba, abaMenu === 'categorias' && styles.btnAbaAtiva]} 
+              onPress={() => setAbaMenu('categorias')}
+            >
+              <Text style={abaMenu === 'categorias' ? styles.textWhite : styles.textBlack}>Por Categoria</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.btnAba, abaMenu === 'historico' && styles.btnAbaAtiva]} 
+              onPress={() => setAbaMenu('historico')}
+            >
+              <Text style={abaMenu === 'historico' ? styles.textWhite : styles.textBlack}>Histórico Detalhado</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={{ flex: 1, padding: 15 }}>
+            {abaMenu === 'categorias' ? (
+              <View>
+                {/* CAMPO DE PESQUISA DE SUBCATEGORIA */}
+                <TextInput 
+                  style={styles.inputBusca}
+                  placeholder="🔍 Pesquisar subcategoria..."
+                  value={buscaCategoria}
+                  onChangeText={setBuscaCategoria}
+                />
+
+                <Text style={styles.modalSubtitulo}>Gastos do Mês por Categoria</Text>
+                
+                {Object.keys(gastosPorCategoria).length === 0 ? (
+                  <Text style={styles.emptyText}>Sem gastos registrados este mês.</Text>
+                ) : categoriasFiltradas.length === 0 ? (
+                  <Text style={styles.emptyText}>Nenhuma subcategoria encontrada para "{buscaCategoria}".</Text>
+                ) : (
+                  categoriasFiltradas.map(([cat, total]) => (
+                    <View key={cat} style={styles.cardCatGasto}>
+                      <Text style={styles.catNome}>{cat}</Text>
+                      <Text style={styles.catTotal}>R$ {total.toFixed(2)}</Text>
+                    </View>
+                  ))
+                )}
+              </View>
+            ) : (
+              <View>
+                <Text style={styles.modalSubtitulo}>Histórico Completo de Meses</Text>
+                {historico.length === 0 ? (
+                  <Text style={styles.emptyText}>Nenhum histórico salvo ainda.</Text>
+                ) : (
+                  historico.map((h, index) => (
+                    <View key={index} style={styles.cardHistoricoDetalhado}>
+                      <View style={styles.histHeader}>
+                        <Text style={styles.histMesTitle}>{h.mes}</Text>
+                        <Text style={styles.histTotalTitle}>Total: R$ {h.total.toFixed(2)}</Text>
+                      </View>
+                      <Text style={styles.histItensTitulo}>Itens Comprados:</Text>
+                      {h.itens && h.itens.map(item => (
+                        <View key={item.id} style={styles.histItemRow}>
+                          <Text style={styles.histItemDesc}>• {item.descricao} ({item.categoria})</Text>
+                          <Text style={styles.histItemValor}>R$ {item.valor.toFixed(2)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ))
+                )}
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F0F2F5' },
+  header: { backgroundColor: '#1A237E', padding: 25, paddingTop: 40, alignItems: 'center', borderBottomLeftRadius: 20, borderBottomRightRadius: 20, position: 'relative' },
+  btnMenu: { position: 'absolute', top: 35, right: 20, padding: 10 },
+  icMenu: { color: '#FFF', fontSize: 28, fontWeight: 'bold' },
+  headerTitulo: { color: '#C5CAE9', fontSize: 16 },
+  headerTotal: { color: '#FFF', fontSize: 36, fontWeight: 'bold' },
+  headerSub: { color: '#C5CAE9', fontSize: 14 },
+  card: { backgroundColor: '#FFF', margin: 15, padding: 15, borderRadius: 12, elevation: 4 },
+  input: { borderBottomWidth: 1, borderColor: '#DDD', marginBottom: 15, padding: 8, fontSize: 16 },
+  row: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 15 },
+  btnTipo: { paddingVertical: 8, paddingHorizontal: 30, borderRadius: 20, borderWidth: 1, borderColor: '#1A237E' },
+  btnTipoAtivo: { backgroundColor: '#1A237E' },
+  labelSub: { fontWeight: 'bold', marginBottom: 10, color: '#444' },
+  gridCategorias: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  btnCat: { backgroundColor: '#E0E0E0', padding: 8, borderRadius: 8, marginBottom: 8, width: '48%', alignItems: 'center' },
+  btnCatAtivo: { backgroundColor: '#4CAF50' },
+  textCat: { fontSize: 11, color: '#333' },
+  btnAdicionar: { backgroundColor: '#2196F3', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 10 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginLeft: 20, marginTop: 20, marginBottom: 10, color: '#333' },
+  emptyText: { textAlign: 'center', color: '#888', marginVertical: 10 },
+  itemGasto: { backgroundColor: '#FFF', marginHorizontal: 15, marginBottom: 8, padding: 15, borderRadius: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  itemDesc: { fontSize: 16, fontWeight: 'bold' },
+  itemInfo: { fontSize: 12, color: '#777' },
+  itemValor: { fontSize: 16, fontWeight: 'bold', color: '#D32F2F' },
+  footer: { position: 'absolute', bottom: 0, width: '100%', padding: 15, backgroundColor: '#FFF' },
+  btnFechar: { backgroundColor: '#D32F2F', padding: 15, borderRadius: 10, alignItems: 'center' },
+  textWhite: { color: '#FFF', fontWeight: 'bold' },
+  textBlack: { color: '#000' },
+  
+  // Estilos do Modal / Menu
+  modalContainer: { flex: 1, backgroundColor: '#F0F2F5', paddingTop: 40 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 15 },
+  modalTitulo: { fontSize: 20, fontWeight: 'bold', color: '#1A237E' },
+  btnFecharModal: { color: '#D32F2F', fontSize: 16, fontWeight: 'bold' },
+  rowAba: { flexDirection: 'row', justifyContent: 'space-around', borderBottomWidth: 1, borderBottomColor: '#DDD', paddingBottom: 10 },
+  btnAba: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20, borderWidth: 1, borderColor: '#1A237E' },
+  btnAbaAtiva: { backgroundColor: '#1A237E' },
+  inputBusca: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#DDD', borderRadius: 10, padding: 10, marginBottom: 15, fontSize: 15 },
+  modalSubtitulo: { fontSize: 16, fontWeight: 'bold', marginBottom: 15, color: '#333' },
+  cardCatGasto: { backgroundColor: '#FFF', padding: 15, borderRadius: 10, flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  catNome: { fontSize: 15, fontWeight: 'bold', color: '#444' },
+  catTotal: { fontSize: 15, fontWeight: 'bold', color: '#1A237E' },
+  cardHistoricoDetalhado: { backgroundColor: '#FFF', padding: 15, borderRadius: 10, marginBottom: 15, borderLeftWidth: 5, borderLeftColor: '#1A237E' },
+  histHeader: { flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEE', paddingBottom: 8, marginBottom: 8 },
+  histMesTitle: { fontSize: 16, fontWeight: 'bold', textTransform: 'capitalize', color: '#1A237E' },
+  histTotalTitle: { fontSize: 16, fontWeight: 'bold', color: '#D32F2F' },
+  histItensTitulo: { fontSize: 12, color: '#777', fontWeight: 'bold', marginBottom: 5 },
+  histItemRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 3 },
+  histItemDesc: { fontSize: 13, color: '#555' },
+  histItemValor: { fontSize: 13, fontWeight: 'bold', color: '#333' }
+});
